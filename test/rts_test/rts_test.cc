@@ -99,6 +99,17 @@ class FakeTransmitter : public rts::TransmitInterface {
   bool pin_ = false;
 };
 
+// Implementation of rts::RollingCodeInterface that uses (non-persistent) memory
+// for storing rolling codes, for testing purposes.
+class InMemoryRollingCode : public rts::RollingCodeInterface {
+ public:
+  uint16_t Read() const override { return rolling_code_; }
+  void Write(uint16_t rolling_code) override { rolling_code_ = rolling_code; }
+
+ private:
+  uint16_t rolling_code_;
+};
+
 void TestSerializeFrame() {
   static constexpr uint32_t kAddress = 0xC0FFEE;
   rts::Frame frame(kAddress);
@@ -174,6 +185,41 @@ void TestTransmitFrame() {
   TEST_ASSERT_EQUAL_HEX(expected_frame.address(), deserialized.address());
 }
 
+void TestController() {
+  InMemoryRollingCode rc;
+  rc.Write(0x1337); // Initial rolling code.
+  FakeTransmitter tx;
+  rts::Controller controller(/*address=*/0xC0FFEE, &rc, &tx);
+
+  // Send a kUp command with the controller.
+  controller.SendControlCode(rts::ControlCode::kUp);
+
+  // Verify the frame was sent as expected.
+  TEST_ASSERT_EQUAL(rts::Frame::kPayloadLength * 8, tx.bits_read());
+  rts::Frame actual_frame;
+  TEST_ASSERT_TRUE(DeserializeFrame(tx.payload(), &actual_frame));
+  TEST_ASSERT_EQUAL(rts::ControlCode::kUp, actual_frame.control_code());
+  TEST_ASSERT_EQUAL(0x1337, actual_frame.rolling_code());
+  TEST_ASSERT_EQUAL(0xC0FFEE, actual_frame.address());
+
+  // Verify the rolling code was incremented in storage.
+  TEST_ASSERT_EQUAL(0x1338, rc.Read());
+
+  // Send another command to verify the counter and rolling code are incremented
+  // in the next frame as expected.
+  const int first_frame_counter = actual_frame.counter();
+  controller.SendControlCode(rts::ControlCode::kMy);
+  TEST_ASSERT_TRUE(DeserializeFrame(tx.payload(), &actual_frame));
+  TEST_ASSERT_EQUAL(first_frame_counter + 1, actual_frame.counter());
+  TEST_ASSERT_EQUAL(rts::ControlCode::kMy, actual_frame.control_code());
+  TEST_ASSERT_EQUAL(0x1338, actual_frame.rolling_code());
+  TEST_ASSERT_EQUAL(0xC0FFEE, actual_frame.address());
+
+  // Again, the storage should contain the rolling code for the next command to
+  // be sent.
+  TEST_ASSERT_EQUAL(0x1339, rc.Read());
+}
+
 int main(int argc, char** argv) {
   UNITY_BEGIN();
 
@@ -182,6 +228,7 @@ int main(int argc, char** argv) {
   RUN_TEST(TestDeserializeFrame_BadChecksum);
   RUN_TEST(TestSerializeDeserialize);
   RUN_TEST(TestTransmitFrame);
+  RUN_TEST(TestController);
 
   UNITY_END();
   return 0;

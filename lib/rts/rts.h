@@ -109,6 +109,37 @@ class TransmitInterface {
   virtual void DelayMicroseconds(uint32_t us) = 0;
 };
 
+// Interface for reading and writing the rolling code from/to persistent
+// storage. The rolling code needs to be persisted because RTS receiver will
+// ignore codes they've already seen.
+class RollingCodeInterface {
+ public:
+  // Returns the rolling code stored in persistent storage.
+  virtual uint16_t Read() const = 0;
+  // Writes a new rolling code to persistent storage.
+  virtual void Write(uint16_t rolling_code) = 0;
+};
+
+// Controller is a high-level interface for sending RTS protocol commands. It
+// deals with the particulars of loading, incrementing, and storing rolling
+// codes.
+class Controller {
+ public:
+  // Initializes a controller with the given sender address and interfaces for
+  // storage and RF transmission.
+  //
+  // 'rc' and 'tx' must remain valid for the lifetime of this object.
+  Controller(uint32_t address, RollingCodeInterface* rc, TransmitInterface* tx);
+
+  // Sends a single command using the RTS protocol to the RF transmitter.
+  void SendControlCode(ControlCode code);
+
+ private:
+  Frame frame_;
+  RollingCodeInterface* const rc_;  // Not owned.
+  TransmitInterface* const tx_;  // Not owned.
+};
+
 // Writes a checksummed and obfuscated data frame to '*payload'. '*payload' must
 // be at least Frame::kPayloadLength bytes.
 void SerializeFrame(const Frame& frame, uint8_t* payload);

@@ -116,6 +116,28 @@ void Frame::set_address(const uint32_t address) {
   address_ = address & 0xFFFFFF;
 }
 
+Controller::Controller(
+    const uint32_t address,
+    RollingCodeInterface* const rc,
+    TransmitInterface* const tx)
+    : frame_(address), rc_(rc), tx_(tx) {
+  frame_.set_rolling_code(rc->Read());
+}
+
+void Controller::SendControlCode(const ControlCode code) {
+  frame_.set_control_code(code);
+
+  // Transmit the frame.
+  TransmitFrame(frame_, tx_);
+
+  // Increment counter and rolling code for the *next* frame to be sent.
+  frame_.set_counter(frame_.counter() + 1);
+  frame_.set_rolling_code(frame_.rolling_code() + 1);
+
+  // Call the callback to update the rolling code in persistent storage.
+  rc_->Write(frame_.rolling_code());
+}
+
 //   byte
 //    0       1        2       3       4       5       6
 // |-------|--------|-------|-------|-------|-------|-------|
