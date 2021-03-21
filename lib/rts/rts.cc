@@ -7,6 +7,14 @@ namespace rts {
 
 namespace {
 
+// Length of a symbol for the RTS protocol.
+//
+// The analysis on https://pushstack.wordpress.com/somfy-rts-protocol/ lists the
+// symbol width of 1208us (not 1280us). The width of 1280us is from a Telis 4
+// RTS remote (FCC ID DWNTELIS4), observed with a HackRF. 1280us is the value
+// cited in patent US8189620.
+constexpr int kSymbolUs = 1280;
+
 // Returns the checksum of the Frame serialized in '*payload'. The checksum
 // field must be set to 0 before calling this function.
 uint8_t Checksum(const uint8_t* const payload) {
@@ -33,6 +41,62 @@ void Obfuscate(uint8_t* const payload) {
 void Deobfuscate(uint8_t* const payload) {
   for (int i = Frame::kPayloadLength - 1; i > 0; --i) {
     payload[i] ^= payload[i - 1];
+  }
+}
+
+void Pulse(const int us, TransmitInterface* const tx) {
+  tx->SetHigh();
+  tx->DelayMicroseconds(us);
+  tx->SetLow();
+}
+
+void WakeupPulse(TransmitInterface* const tx) {
+  Pulse(/*us=*/10000, tx);
+  tx->DelayMicroseconds(38000);
+}
+
+void HardwareSync(int iterations, TransmitInterface* const tx) {
+  for (; iterations > 0; --iterations) {
+    Pulse(2500, tx);
+    tx->DelayMicroseconds(2500);
+  }
+}
+
+void SoftwareSync(TransmitInterface* const tx) {
+  Pulse(4800, tx);
+  tx->DelayMicroseconds(kSymbolUs / 2);
+}
+
+// Pulses 'byte' to kRfPin with one bit per symbol and Manchester encoding, MSB
+// first.
+void ShiftOutByte(const uint8_t byte, TransmitInterface* const tx) {
+  for (int i = 7; i >= 0; --i) {
+    const int bit = (byte >> i) & 0x1;
+    if (bit == 1) {
+      tx->SetLow();
+      tx->DelayMicroseconds(kSymbolUs / 2);
+      tx->SetHigh();
+      tx->DelayMicroseconds(kSymbolUs / 2);
+    } else {
+      tx->SetHigh();
+      tx->DelayMicroseconds(kSymbolUs / 2);
+      tx->SetLow();
+      tx->DelayMicroseconds(kSymbolUs / 2);
+    }
+  }
+  tx->SetLow();
+}
+
+void ShiftOutFrame(const Frame& frame, TransmitInterface* const tx) {
+  uint8_t payload[Frame::kPayloadLength];
+  SerializeFrame(frame, payload);
+
+  // Payload, Manchester encoded, with one bit per kSymbolUs.
+  //
+  //   Zero: half-symbol high, half-symbol low.
+  //    One: half-symbol low, half-symbol high.
+  for (unsigned int i = 0; i < sizeof(payload); ++i) {
+    ShiftOutByte(payload[i], tx);
   }
 }
 
@@ -106,6 +170,26 @@ bool DeserializeFrame(const uint8_t* const payload, Frame* const frame) {
   frame->set_address(address);
 
   return true;
+}
+
+void TransmitFrame(const Frame& frame, TransmitInterface* const tx) {
+  WakeupPulse(tx);
+
+  // Initial frame.
+  HardwareSync(/*iterations=*/2, tx);
+  SoftwareSync(tx);
+  ShiftOutFrame(frame, tx);
+
+  // Repeated frames.
+  for (int i = 0; i < 5; ++i) {
+    // ~34ms of silence before the next hardware sync according to US8189620B2.
+    tx->DelayMicroseconds(34000);
+    HardwareSync(/*iterations=*/6, tx);
+    SoftwareSync(tx);
+    ShiftOutFrame(frame, tx);
+  }
+
+  tx->DelayMicroseconds(34000);
 }
 
 }  // namespace rts

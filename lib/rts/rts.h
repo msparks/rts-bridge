@@ -94,6 +94,21 @@ class Frame {
   uint32_t address_ = 0;
 };
 
+// Interface for sending data with an RF transmitter. RTS receivers expect
+// ASK-modulated data at 433.42MHz.
+class TransmitInterface {
+ public:
+  // Enable the transmitter. In most implementations, this will set the data pin
+  // high.
+  virtual void SetHigh() = 0;
+  // Disable the transmitter. In most implementations, this will set the data
+  // pin low.
+  virtual void SetLow() = 0;
+  // Wait for 'us' microseconds. Implementations must be accurate to within 10%
+  // or so to ensure successful decoding at the receiver.
+  virtual void DelayMicroseconds(uint32_t us) = 0;
+};
+
 // Writes a checksummed and obfuscated data frame to '*payload'. '*payload' must
 // be at least Frame::kPayloadLength bytes.
 void SerializeFrame(const Frame& frame, uint8_t* payload);
@@ -101,6 +116,11 @@ void SerializeFrame(const Frame& frame, uint8_t* payload);
 // Deserializes a Frame from '*payload' into '*frame' and returns true if
 // successful. '*payload' must be at least Frame::kPayloadLength bytes.
 bool DeserializeFrame(const uint8_t* payload, Frame* frame);
+
+// Sends a single Frame to an RF transmitter. The transmitted frame is preceded
+// by a brief wakeup pulse and the hardware and software synchronization pulses,
+// as required by the RTS protocol.
+void TransmitFrame(const Frame& frame, TransmitInterface* tx);
 
 }  // namespace rts
 
