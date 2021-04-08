@@ -1,0 +1,26 @@
+load("@rules_foreign_cc//foreign_cc:defs.bzl", "cmake")
+
+filegroup(
+    name = "all_srcs",
+    srcs = glob(["**"]),
+)
+
+cmake(
+    name = "mqtt-c",
+    cache_entries = {
+        "MAKEFLAGS": "-j5",
+        "PAHO_BUILD_SHARED": "FALSE",
+        "PAHO_BUILD_STATIC": "TRUE",
+        "PAHO_WITH_SSL": "TRUE",
+        "OPENSSL_ROOT_DIR": "$EXT_BUILD_DEPS/openssl",
+    },
+    defines = ["NDEBUG"],
+    lib_source = ":all_srcs",
+    out_static_libs = [
+        "libpaho-mqtt3as.a",
+    ],
+    visibility = ["//visibility:public"],
+    deps = [
+        "@openssl",
+    ],
+)
